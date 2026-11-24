@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AEGIS — Assisted Executive Guidance & Intelligence System</title>
+    <!-- Fonts & Icons -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Orbitron:wght@500;700;900&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Mermaid.js for Dynamic System Blueprints -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <!-- Chart.js for Visual Analytics -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Marked for Markdown Parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+    <!-- TensorFlow.js and COCO-SSD for Real-Time Neural Object Detection -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+
+    <!-- AEGIS Cyber-Executive Styling -->
+    <link rel="stylesheet" href="/static/css/aegis.css">
+</head>
+<body class="theme-cyber-dark">
+    <!-- Supervised Holographic Grid Background -->
+    <div class="grid-backdrop"></div>
+    <div class="glow-orb-ambient"></div>
+
+    <!-- MAIN WRAPPER -->
+    <div class="app-container">
+        
+        <!-- HEADER / MISSION BAR -->
+        <header class="executive-header">
+            <div class="header-brand">
+                <div class="logo-hexagon">
+                    <i class="fa-solid fa-shield-halved logo-shield"></i>
+                    <div class="pulse-ring"></div>
+                </div>
+                <div class="brand-text">
+                    <div class="title-row">
+                        <span class="brand-title">AEGIS</span>
+                        <span class="brand-badge">SIH EXECUTIVE EDITION</span>
+                    </div>
+                    <span class="brand-sub">Assisted Executive Guidance & Intelligence System</span>
+                </div>
+            </div>
+
+            <!-- Pipeline Status Indicator -->
+            <div class="supervision-status-chip">
+                <div class="status-indicator live-pulse" id="coreStatusDot"></div>
+                <span class="chip-label">SUPERVISION:</span>
+                <span class="chip-val" id="currentSupervisionMode">{{ user_profile.supervision_mode }}</span>
+            </div>
+
+            <!-- Top Controls & Kill Speech Feature -->
+            <div class="header-actions">
+                <button class="btn-kill" id="btnKillSpeech" title="Stop AEGIS Talking / Kill Speech (Press Esc or K)">
+                    <i class="fa-solid fa-volume-xmark"></i> KILL SPEECH
+                </button>
+                <button class="btn-icon" id="btnSystemInfo" title="System Telemetry">
+                    <i class="fa-solid fa-microchip"></i>
+                </button>
+                <button class="btn-icon" id="btnSettingsModal" title="Supervision Settings">
+                    <i class="fa-solid fa-sliders"></i>
+                </button>
+                <div class="live-clock" id="liveClock">00:00:00</div>
+            </div>
+        </header>
+
+        <!-- REASONING & SUPERVISION PIPELINE INSPECTOR BAR -->
+        <section class="pipeline-inspector">
+            <div class="pipeline-title"><i class="fa-solid fa-diagram-project"></i> PIPELINE TRACE</div>
+            <div class="pipeline-nodes">
+                <div class="p-node active" id="nodeInput"><span class="p-num">1</span> INPUT</div>
+                <div class="p-arrow">➔</div>
+                <div class="p-node" id="nodeIntent"><span class="p-num">2</span> INTENT</div>
+                <div class="p-arrow">➔</div>
+                <div class="p-node" id="nodeMemory"><span class="p-num">3</span> CONTEXT</div>
+                <div class="p-arrow">➔</div>
+                <div class="p-node" id="nodeReasoning"><span class="p-num">4</span> REASONING</div>
+                <div class="p-arrow">➔</div>
+                <div class="p-node" id="nodeSupervision"><span class="p-num">5</span> SUPERVISION</div>
+                <div class="p-arrow">➔</div>
+                <div class="p-node" id="nodeAction"><span class="p-num">6</span> ACTION</div>
+                <div class="p-arrow">➔</div>
+                <div class="p-node" id="nodeAudit"><span class="p-num">7</span> AUDIT</div>
+            </div>
+            <div class="pipeline-timer" id="pipelineDuration">Latency: 0 ms</div>
+        </section>
+
+        <!-- MAIN DUAL-PANE WORKSPACE -->
+        <main class="workspace-grid">
+            
+            <!-- LEFT PANE: ASSISTANT INTERFACE & CONVERSATION -->
+            <section class="assistant-pane glass-panel">
+                
+                <!-- Holographic Visualizer Orb Header -->
+                <div class="orb-container">
+                    <div class="hologram-orb" id="hologramOrb">
+                        <div class="orb-core"></div>
+                        <div class="orb-wave wave-1"></div>
+                        <div class="orb-wave wave-2"></div>
+                        <div class="orb-wave wave-3"></div>
+                    </div>
+                    <div class="orb-status-text" id="orbStatusText">AEGIS SUPERVISED • READY</div>
+                </div>
+
+                <!-- Chat Stream -->
+                <div class="chat-viewport" id="chatViewport">
+                    <!-- Intro Mission Briefing -->
+                    <div class="message-card system-card">
+                        <div class="msg-header">
+                            <i class="fa-solid fa-shield-virus"></i> AEGIS SYSTEM INITIALIZED
+                        </div>
+                        <div class="msg-body">
+                            <p><strong>Assisted Executive Guidance and Intelligence System (AEGIS)</strong> is online for <strong>Ayushmaan</strong>.</p>
+                            <div class="philosophy-quote">
+                                "AI assists. AI reasons. AI recommends. The user decides."
+                            </div>
+                            <p>Consequential actions require authorization. Type, click a quick scenario, or <strong>hold Spacebar / Mic</strong> for Push-To-Talk.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quick Action Scenarios for SIH Demo -->
+                <div class="quick-scenarios">
+                    <span class="scenario-label"><i class="fa-solid fa-bolt"></i> QUICK DEMOS:</span>
+                    <button class="btn-chip" onclick="executeQuickPrompt('tell me about pok')">
+                        <i class="fa-solid fa-landmark"></i> PoK Briefing
+                    </button>
+                    <button class="btn-chip" onclick="executeQuickPrompt('play believer song')">
+                        <i class="fa-brands fa-youtube"></i> Play Music
+                    </button>
+                    <button class="btn-chip" onclick="executeQuickPrompt('open website github')">
+                        <i class="fa-solid fa-globe"></i> Open Website
+                    </button>
+                    <button class="btn-chip" onclick="executeQuickPrompt('Create a blueprint explaining AEGIS system architecture')">
+                        <i class="fa-solid fa-sitemap"></i> Blueprint
+                    </button>
+                    <button class="btn-chip" onclick="executeQuickPrompt('Find 3 Python resources and organize them in a file')">
+                        <i class="fa-solid fa-list-check"></i> Python Workflow
+                    </button>
+                    <button class="btn-chip chip-danger" onclick="executeQuickPrompt('Delete temporary test files in workspace')">
+                        <i class="fa-solid fa-triangle-exclamation"></i> Critical Deletion
+                    </button>
+                </div>
+
+                <!-- Input Console with Push-To-Talk -->
+                <div class="input-console">
+                    <button class="btn-media" id="btnCameraSnap" title="Live Camera Snapshot & Object Recognition">
+                        <i class="fa-solid fa-camera"></i>
+                    </button>
+                    <label class="btn-media" title="Upload Image/Document">
+                        <i class="fa-solid fa-paperclip"></i>
+                        <input type="file" id="imageFileInput" accept="image/*" style="display: none;">
+                    </label>
+
+                    <div class="input-field-wrapper">
+                        <textarea id="userInputPrompt" placeholder="Instruct AEGIS or ask any question... (Hold Space to Talk)" rows="1"></textarea>
+                    </div>
+
+                    <!-- Push-To-Talk / Voice Toggle Mic Button -->
+                    <button class="btn-mic" id="btnVoiceToggle" title="Push-To-Talk: Hold to Speak, Release to Send">
+                        <i class="fa-solid fa-microphone" id="micIcon"></i>
+                    </button>
+
+                    <button class="btn-send" id="btnSendPrompt" title="Execute Instruction">
+                        <i class="fa-solid fa-paper-plane"></i>
+                    </button>
+                </div>
+
+                <div class="voice-status-bar" id="voiceStatusBar">
+                    <div class="ptt-badge" id="pttModeBadge">
+                        <i class="fa-solid fa-hand-pointer"></i> <span id="pttModeText">PUSH-TO-TALK (Hold Spacebar or Mic)</span>
+                    </div>
+                    <span id="voiceStatusMsg">Voice recognition standby</span>
+                    <span class="tts-toggle-wrap">
+                        <input type="checkbox" id="chkAudioTTS" checked>
+                        <label for="chkAudioTTS"><i class="fa-solid fa-volume-high"></i> Voice Output</label>
+                    </span>
+                </div>
+            </section>
+
+            <!-- RIGHT PANE: MULTIMODAL VISUAL CANVAS -->
+            <section class="visual-canvas-pane glass-panel">
+                
+                <!-- Canvas Tab Navigation -->
+                <nav class="canvas-tabs">
+                    <button class="tab-btn active" data-tab="blueprints">
+                        <i class="fa-solid fa-bezier-curve"></i> Blueprints
+                    </button>
+                    <button class="tab-btn" data-tab="analytics">
+                        <i class="fa-solid fa-chart-pie"></i> Visual Charts
+                    </button>
+                    <button class="tab-btn" data-tab="vision">
+                        <i class="fa-solid fa-eye"></i> Vision & Camera
+                    </button>
+                    <button class="tab-btn" data-tab="rules">
+                        <i class="fa-solid fa-scale-balanced"></i> Rules & Memory
+                    </button>
+                    <button class="tab-btn" data-tab="audit">
+                        <i class="fa-solid fa-clock-rotate-left"></i> Action Audit
+                    </button>
+                    <button class="tab-btn" data-tab="workspace">
+                        <i class="fa-solid fa-folder-tree"></i> Files
+                    </button>
+                </nav>
+
+                <!-- TAB 1: BLUEPRINTS / MERMAID -->
+                <div class="tab-content active" id="tab-blueprints">
+                    <div class="canvas-header">
+                        <h3 id="blueprintTitle"><i class="fa-solid fa-sitemap"></i> System Architectural Blueprint</h3>
+                        <div class="canvas-controls">
+                            <button class="btn-sm" id="btnDownloadBlueprint"><i class="fa-solid fa-copy"></i> Copy Code</button>
+                        </div>
+                    </div>
+                    <div class="mermaid-viewport" id="mermaidContainer">
+                        <pre class="mermaid" id="activeMermaidPre">
+flowchart TD
+    User["👤 USER (Voice / Text / Camera)"] --> InputLayer["📥 INPUT LAYER (Speech, Parser, Vision)"]
+    InputLayer --> CoreEngine["🧠 AEGIS CORE ENGINE<br/>• Intent Understanding<br/>• Reasoning & Truth Check"]
+
+    CoreEngine <--> Memory["💾 MEMORY SYSTEM<br/>• Profiles & Vault<br/>• Custom User Rules"]
+    CoreEngine <--> AI["🌐 AI & KNOWLEDGE<br/>• Multi-LLM<br/>• Live Web Search"]
+
+    CoreEngine --> Supervision["🛡️ SUPERVISION LAYER (Core Differentiator)<br/>• Risk Rating (SAFE ➜ CRITICAL)<br/>• Policy & Rule Verification<br/>• Blast Radius Calculation"]
+
+    Supervision --> RiskDecision{"Supervision Gate"}
+    RiskDecision -- "SAFE / Low Risk" --> ActionEngine["⚙️ ACTION ENGINE"]
+    RiskDecision -- "Consequential<br/>(Medium / High / Critical)" --> ApprovalGate["⚠️ USER APPROVAL GATE"]
+
+    ApprovalGate -- "✅ Approved" --> ActionEngine
+    ApprovalGate -- "❌ Rejected" --> AbortLog["🛑 ABORT & AUDIT LOG"]
+
+    ActionEngine --> Tools["🧰 TOOLS & SANDBOX<br/>• Desktop Apps<br/>• Workspace Files<br/>• Blueprints & Charts"]
+    Tools --> Output["🖥️ EXECUTIVE DASHBOARD & TTS"]
+    Output --> AuditLog["📜 PERMANENT AUDIT TRAIL"]
+                        </pre>
+                    </div>
+                </div>
+
+                <!-- TAB 2: ANALYTICS & CHARTS -->
+                <div class="tab-content" id="tab-analytics">
+                    <div class="canvas-header">
+                        <h3 id="chartTitle"><i class="fa-solid fa-chart-line"></i> Dynamic Analytics Canvas</h3>
+                    </div>
+                    <div class="chart-wrapper">
+                        <canvas id="aegisLiveChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- TAB 3: REAL-TIME NEURAL VISION & WEBCAM -->
+                <div class="tab-content" id="tab-vision">
+                    <div class="canvas-header">
+                        <h3><i class="fa-solid fa-camera-viewfinder"></i> Real-Time Neural Vision & Object Tracking</h3>
+                        <div class="canvas-controls">
+                            <button class="btn-sm btn-primary" id="btnToggleWebcam"><i class="fa-solid fa-video"></i> Start Webcam</button>
+                            <button class="btn-sm" id="btnAskAboutView"><i class="fa-solid fa-wand-magic-sparkles"></i> What Do You See?</button>
+                        </div>
+                    </div>
+                    <div class="vision-grid">
+                        <div class="webcam-box" id="webcamContainer">
+                            <video id="webcamVideo" autoplay playsinline muted></video>
+                            <canvas id="detectionOverlayCanvas" class="detection-canvas"></canvas>
+                            <canvas id="captureCanvas" style="display: none;"></canvas>
+                            <div class="webcam-overlay" id="webcamOverlay">Camera Standby (Click 'Start Webcam')</div>
+                            <div class="vision-hud-bar" id="visionHudBar" style="display: none;">
+                                <span class="hud-tag"><i class="fa-solid fa-radar"></i> AI Tracking:</span>
+                                <span id="hudDetectedList" class="hud-detected">Scanning scene...</span>
+                            </div>
+                        </div>
+                        <div class="vision-results-box" id="visionResultsBox">
+                            <div class="vision-placeholder">
+                                <i class="fa-solid fa-eye"></i>
+                                <h4>Real-Time Neural Vision System</h4>
+                                <p>Start webcam to activate live COCO-SSD object recognition (detects persons, phones, laptops, cups, chairs, books, etc. at 30 FPS).</p>
+                                <p>Click <strong>"What Do You See?"</strong> for AEGIS to speak and explain what is in view!</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TAB 4: RULES & MEMORY VAULT -->
+                <div class="tab-content" id="tab-rules">
+                    <div class="canvas-header">
+                        <h3><i class="fa-solid fa-shield-halved"></i> Active Safety Policies & User Rules</h3>
+                        <button class="btn-sm btn-primary" id="btnAddRuleModal"><i class="fa-solid fa-plus"></i> New Rule</button>
+                    </div>
+                    <div class="rules-list" id="rulesListContainer">
+                        <!-- Populated via JS -->
+                    </div>
+
+                    <div class="canvas-header mt-4">
+                        <h3><i class="fa-solid fa-brain"></i> Knowledge Vault & Remembered Facts</h3>
+                    </div>
+                    <div class="vault-list" id="vaultListContainer">
+                        <!-- Populated via JS -->
+                    </div>
+                </div>
+
+                <!-- TAB 5: ACTION AUDIT TRAIL -->
+                <div class="tab-content" id="tab-audit">
+                    <div class="canvas-header">
+                        <h3><i class="fa-solid fa-list-check"></i> Cryptographic Action Audit Trail</h3>
+                        <div class="audit-actions">
+                            <select id="auditRiskFilter" class="select-sm">
+                                <option value="">All Risk Tiers</option>
+                                <option value="SAFE">SAFE</option>
+                                <option value="LOW">LOW</option>
+                                <option value="MEDIUM">MEDIUM</option>
+                                <option value="HIGH">HIGH</option>
+                                <option value="CRITICAL">CRITICAL</option>
+                            </select>
+                            <a href="/api/audit-logs/export" target="_blank" class="btn-sm">
+                                <i class="fa-solid fa-download"></i> Export MD
+                            </a>
+                        </div>
+                    </div>
+                    <div class="audit-metrics-row" id="auditMetricsRow">
+                        <div class="metric-card"><span class="m-val" id="metricTotal">0</span><span class="m-lbl">Total Actions</span></div>
+                        <div class="metric-card"><span class="m-val text-success" id="metricApproved">0</span><span class="m-lbl">Approved</span></div>
+                        <div class="metric-card"><span class="m-val text-danger" id="metricRejected">0</span><span class="m-lbl">Rejected</span></div>
+                        <div class="metric-card"><span class="m-val text-warning" id="metricBlocked">0</span><span class="m-lbl">Safety Blocked</span></div>
+                    </div>
+                    <div class="audit-table-wrapper">
+                        <table class="audit-table">
+                            <thead>
+                                <tr>
+                                    <th>Timestamp</th>
+                                    <th>Prompt</th>
+                                    <th>Risk</th>
+                                    <th>Decision / Status</th>
+                                    <th>Action</th>
+                                    <th>Hash</th>
+                                </tr>
+                            </thead>
+                            <tbody id="auditTableBody">
+                                <!-- Populated dynamically -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- TAB 6: WORKSPACE SANDBOX FILES -->
+                <div class="tab-content" id="tab-workspace">
+                    <div class="canvas-header">
+                        <h3><i class="fa-solid fa-folder-open"></i> Sandboxed Workspace (data/workspace/)</h3>
+                        <button class="btn-sm" id="btnRefreshFiles"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button>
+                    </div>
+                    <div class="file-grid" id="workspaceFilesGrid">
+                        <!-- Populated dynamically -->
+                    </div>
+                </div>
+
+            </section>
+        </main>
+    </div>
+
+    <!-- SUPERVISION PERMISSION APPROVAL MODAL -->
+    <div class="modal-backdrop" id="approvalModal">
+        <div class="modal-card glass-panel modal-supervision">
+            <div class="modal-header">
+                <div class="modal-badge-row">
+                    <span class="risk-badge" id="modalRiskBadge">CRITICAL</span>
+                    <span class="modal-title">SUPERVISION AUTHORIZATION REQUIRED</span>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div class="alert-box">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                    <div>
+                        <strong>Consequential Action Detected</strong>
+                        <p id="modalReasonText">Action exceeds standard autonomous authorization policy.</p>
+                    </div>
+                </div>
+
+                <div class="action-spec-grid">
+                    <div class="spec-item">
+                        <span class="spec-lbl">Action Type:</span>
+                        <span class="spec-val font-mono" id="modalActionType">file_delete</span>
+                    </div>
+                    <div class="spec-item">
+                        <span class="spec-lbl">Target / Scope:</span>
+                        <span class="spec-val font-mono" id="modalTarget">temp_logs.txt</span>
+                    </div>
+                    <div class="spec-item full-width">
+                        <span class="spec-lbl">Blast Radius & Potential Impact:</span>
+                        <span class="spec-val text-warning" id="modalBlastRadius">Permanently removes file from workspace. Irreversible.</span>
+                    </div>
+                </div>
+
+                <div class="supervision-prompt-question">
+                    "AI assists and recommends. Do you authorize AEGIS to proceed with this action?"
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-reject" id="btnRejectAction">
+                    <i class="fa-solid fa-xmark"></i> REJECT / ABORT
+                </button>
+                <button class="btn-approve" id="btnApproveAction">
+                    <i class="fa-solid fa-check"></i> AUTHORIZE & EXECUTE
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- SETTINGS & PROFILE MODAL -->
+    <div class="modal-backdrop" id="settingsModal">
+        <div class="modal-card glass-panel">
+            <div class="modal-header">
+                <span class="modal-title"><i class="fa-solid fa-sliders"></i> AEGIS Executive Settings</span>
+                <button class="btn-close" id="btnCloseSettings">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Supervision Strictness Mode</label>
+                    <select id="settingSupervisionMode" class="form-control">
+                        <option value="BALANCED">BALANCED (Standard SIH: Auto-approves Safe/Low, Prompts for Medium/High/Critical)</option>
+                        <option value="ZERO_TRUST">ZERO TRUST (Strict: Requires human authorization for ANY action >= LOW)</option>
+                        <option value="AUTONOMOUS">AUTONOMOUS (Permissive: Auto-approves Safe/Low/Medium, Prompts for High/Critical)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>AI Model Provider</label>
+                    <select id="settingModelProvider" class="form-control">
+                        <option value="local">Built-in Local Heuristic Expert Engine (100% Offline)</option>
+                        <option value="gemini">Google Gemini 1.5 Flash</option>
+                        <option value="groq">Groq Llama 3.3 70B</option>
+                        <option value="openai">OpenAI GPT-4o Mini</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>API Key (Optional for Cloud Models)</label>
+                    <input type="password" id="settingApiKey" class="form-control" placeholder="Enter API Key if using Gemini/Groq/OpenAI...">
+                </div>
+                <div class="form-group">
+                    <label>Executive Name</label>
+                    <input type="text" id="settingUserName" class="form-control" value="{{ user_profile.name }}">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-sm btn-primary" id="btnSaveSettings"><i class="fa-solid fa-save"></i> Save Settings</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- NEW RULE MODAL -->
+    <div class="modal-backdrop" id="newRuleModal">
+        <div class="modal-card glass-panel">
+            <div class="modal-header">
+                <span class="modal-title"><i class="fa-solid fa-plus-circle"></i> Add Custom Safety Rule</span>
+                <button class="btn-close" id="btnCloseRuleModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Rule Name</label>
+                    <input type="text" id="ruleNameInput" class="form-control" placeholder="e.g. Budget Spend Guard">
+                </div>
+                <div class="form-group">
+                    <label>Policy / Constraint Rule Text</label>
+                    <textarea id="ruleTextInput" class="form-control" rows="2" placeholder="e.g. Always ask for permission before modifying files ending in .py"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Risk Level Override</label>
+                    <select id="ruleRiskOverride" class="form-control">
+                        <option value="HIGH">HIGH</option>
+                        <option value="CRITICAL">CRITICAL</option>
+                        <option value="MEDIUM">MEDIUM</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-sm btn-primary" id="btnSaveNewRule"><i class="fa-solid fa-check"></i> Register Policy Rule</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- FLOATING MEDIA CONTROLLER HUD -->
+    <div id="floatingMediaHud" class="floating-media-hud" style="display: none; position: fixed; bottom: 24px; right: 28px; z-index: 9999; padding: 12px 18px; border-radius: 12px; border: 1px solid var(--accent-cyan); background: rgba(10, 25, 47, 0.95); box-shadow: 0 8px 32px rgba(0, 240, 255, 0.25); backdrop-filter: blur(10px); min-width: 320px;">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <i class="fa-solid fa-compact-disc fa-spin" style="color: var(--accent-cyan); font-size: 1.2rem;"></i>
+                <span id="hudSongTitle" style="font-weight: 700; font-size: 0.88rem; color: #fff; max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">PLAYING AUDIO</span>
+            </div>
+            <button onclick="document.getElementById('floatingMediaHud').style.display='none'" style="background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 1rem;"><i class="fa-solid fa-times"></i></button>
+        </div>
+        <div style="display: flex; gap: 6px; align-items: center; justify-content: center;">
+            <button class="btn-sm btn-primary" onclick="controlMedia('pause')" title="Pause Playback"><i class="fa-solid fa-pause"></i> Pause</button>
+            <button class="btn-sm btn-primary" onclick="controlMedia('resume')" title="Resume Playback"><i class="fa-solid fa-play"></i> Resume</button>
+            <button class="btn-sm btn-outline" onclick="controlMedia('vol_down')" title="Volume Down"><i class="fa-solid fa-volume-low"></i></button>
+            <button class="btn-sm btn-outline" onclick="controlMedia('vol_up')" title="Volume Up"><i class="fa-solid fa-volume-high"></i></button>
+            <button class="btn-sm btn-outline" onclick="controlMedia('mute')" title="Mute/Unmute"><i class="fa-solid fa-volume-xmark"></i></button>
+            <button class="btn-sm chip-danger" onclick="controlMedia('stop')" title="Stop Playback"><i class="fa-solid fa-stop"></i> Stop</button>
+        </div>
+    </div>
+
+    <!-- Core JavaScript Modules -->
+    <script src="/static/js/visualizer.js"></script>
+    <script src="/static/js/voice.js"></script>
+    <script src="/static/js/mermaid_ui.js"></script>
+    <script src="/static/js/charts.js"></script>
+    <script src="/static/js/camera.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
