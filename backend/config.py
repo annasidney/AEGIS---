@@ -13,17 +13,32 @@ class Settings(BaseSettings):
 
     # App Settings
     APP_NAME: str = "AEGIS — Assisted Executive Guidance and Intelligence System"
-    APP_VERSION: str = "1.0.0"
+    APP_VERSION: str = "2.0.0"
     DEBUG: bool = False
     HOST: str = "127.0.0.1"
     PORT: int = 8000
 
-    # AI Model Settings (OpenRouter & Gemini)
-    OPENROUTER_API_KEY: str = ""
+    # AI Model Settings (Gemini 2.5 Flash primary, OpenRouter optional fallback)
     GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta"
+    AGENT_MAX_STEPS: int = 6
+    OPENROUTER_API_KEY: str = ""
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
     OPENROUTER_MODEL: str = "google/gemini-2.0-flash-001"
     VISION_MODEL: str = "google/gemini-2.0-flash-001"
+
+    # Local vision (YOLOv5m ONNX + temporal smoothing)
+    YOLO_MODEL_FILE: str = "yolov5m.onnx"
+    YOLO_CONF_THRESHOLD: float = 0.35
+    YOLO_IOU_THRESHOLD: float = 0.45
+    TRACK_EMA_ALPHA: float = 0.45        # EMA smoothing factor for box coordinates / confidence
+    TRACK_PERSISTENCE_MS: int = 850      # keep a lost target visible for this long (reduces jitter)
+
+    # Auth (Google Sign-In). Leave empty to run in local-profile mode.
+    GOOGLE_CLIENT_ID: str = ""
+    AUTH_SECRET: str = "change-me-aegis-local-secret"
+    AUTH_TOKEN_TTL_HOURS: int = 72
 
     # Database
     DATABASE_URL: str = f"sqlite:///{BASE_DIR_PATH / 'aegis.db'}"

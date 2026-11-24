@@ -67,6 +67,19 @@ class UserSetting(Base):
     value = Column(Text, nullable=False)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    provider = Column(String(20), nullable=False, default="local")   # "google" | "local"
+    subject = Column(String(255), nullable=False, index=True)        # Google `sub` or lowercase local name
+    name = Column(String(150), nullable=False, default="")
+    email = Column(String(255), nullable=True)
+    picture = Column(String(500), nullable=True)
+    role = Column(String(100), nullable=True, default="")
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    last_login = Column(DateTime, default=datetime.datetime.utcnow)
+
 # Pydantic Schemas
 class MessageCreate(BaseModel):
     text: str

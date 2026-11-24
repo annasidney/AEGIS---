@@ -1,4 +1,7 @@
 import os
+import time
+import statistics
+from collections import deque
 import json
 import base64
 import asyncio
@@ -33,6 +36,8 @@ from backend.services.memory import memory_store
 from backend.services.shutdown import perform_graceful_shutdown
 from backend.agent.router import router
 from backend.agent.llm_agent import agent
+from backend.services.tracker import detection_tracker
+from backend.auth import router as auth_router
 
 # Logging setup
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -63,6 +68,36 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# Spatial episodic memory: remember *stable* tracked targets (category, relation, time) - never raw video.
+_last_remembered: Dict[str, float] = {}
+REMEMBER_EVERY_SECONDS = 6.0
+
+
+def remember_stable_targets(targets: List[Dict[str, Any]]) -> int:
+    saved = 0
+    now = time.monotonic()
+    for item in targets:
+        if not item.get("stable") or item.get("age_ms", 0) > 0:
+            continue
+        name = item["name"]
+        if now - _last_remembered.get(name, 0.0) < REMEMBER_EVERY_SECONDS:
+            continue
+        _last_remembered[name] = now
+        visual_memory_engine.store_observation(
+            name,
+            item.get("location") or "in view",
+            room="workspace",
+            spatial_relationship=item.get("spatial_relationship") or "in view",
+            confidence=float(item.get("confidence", 0.9)),
+        )
+        saved += 1
+    return saved
+
+
+# Lightweight runtime stats surfaced in the UI header
+status_state: Dict[str, Any] = {"last_latency_ms": None, "router_latency_ms": None}
+_router_samples: "deque[float]" = deque(maxlen=20)
+
 # Hook reminder notifications to WebSocket broadcast & TTS alert
 async def on_reminder_due(reminder_id: int, text: str, time_str: str):
     logger.info(f"Broadcast reminder due: {text} at {time_str}")
@@ -89,6 +124,12 @@ async def lifespan(app: FastAPI):
     init_db()
     logger.info("Starting background reminder scheduler...")
     reminder_scheduler.start()
+    # Warm the deterministic router / system-clock tool so the very first user command is fast.
+    for warm in ("hello", "2*2", "what time is it"):
+        try:
+            await router.route_and_execute(warm)
+        except Exception as e:  # never block startup
+            logger.warning(f"Router warm-up skipped: {e}")
     yield
     logger.info("Shutting down AEGIS services...")
     camera_service.stop_camera()
@@ -101,6 +142,8 @@ app = FastAPI(
     description="Assisted Executive Guidance and Intelligence System Backend",
     lifespan=lifespan
 )
+
+app.include_router(auth_router)
 
 # CORS middleware
 app.add_middleware(
@@ -118,6 +161,7 @@ async def process_user_query(user_text: str, is_voice: bool = False) -> Dict[str
         return {"response": "I didn't catch that.", "verified": False}
 
     logger.info(f"Processing query: '{clean_text}' (is_voice={is_voice})")
+    started = time.perf_counter()
 
     # Broadcast state: THINKING immediately
     await manager.broadcast_json({"type": "state_change", "state": "THINKING", "query": clean_text})
@@ -136,6 +180,8 @@ async def process_user_query(user_text: str, is_voice: bool = False) -> Dict[str
         tool_name = fast_result.get("tool", "local_fast_route")
         verified = fast_result.get("verified", True)
         action = fast_result.get("action")
+        steps = []
+        route = "router"
     else:
         # 2. General Agent & Reasoning loop
         await manager.broadcast_json({"type": "state_change", "state": "EXECUTING", "query": clean_text})
@@ -144,6 +190,14 @@ async def process_user_query(user_text: str, is_voice: bool = False) -> Dict[str
         tool_name = agent_result.get("tool")
         verified = agent_result.get("verified", True)
         action = agent_result.get("action")
+        steps = agent_result.get("steps", [])
+        route = "agent"
+    latency_ms = round((time.perf_counter() - started) * 1000, 2)
+    status_state["last_latency_ms"] = latency_ms
+    if route == "router":
+        # header shows the rolling median so one slow tool call (e.g. date parsing) doesn't skew it
+        _router_samples.append(latency_ms)
+        status_state["router_latency_ms"] = round(statistics.median(_router_samples), 2)
 
     # Broadcast state: SPEAKING
     await manager.broadcast_json({"type": "state_change", "state": "SPEAKING", "response": response_text})
@@ -164,6 +218,9 @@ async def process_user_query(user_text: str, is_voice: bool = False) -> Dict[str
         "tool": tool_name,
         "verified": verified,
         "action": action,
+        "route": route,
+        "steps": steps,
+        "latency_ms": latency_ms,
         "audio_base64": audio_base64,
         "timestamp": asyncio.get_event_loop().time()
     }
@@ -186,9 +243,19 @@ async def get_status():
         "system_info": get_system_info(),
         "camera_active": camera_service.is_active,
         "continuous_camera": camera_service.continuous_mode,
-        "model": settings.OPENROUTER_MODEL,
+        "model": (settings.GEMINI_MODEL if settings.GEMINI_API_KEY
+                  else settings.OPENROUTER_MODEL if settings.OPENROUTER_API_KEY
+                  else "offline (router + local vision)"),
+        "vision_engine": neural_detector.backend or "heuristic",
+        "router_latency_ms": status_state["router_latency_ms"],
+        "last_latency_ms": status_state["last_latency_ms"],
+        "google_auth_enabled": bool(settings.GOOGLE_CLIENT_ID),
         "has_api_key": bool(settings.OPENROUTER_API_KEY or settings.GEMINI_API_KEY)
     }
+
+@app.get("/api/health")
+async def health():
+    return {"status": "ok", "version": settings.APP_VERSION}
 
 @app.post("/api/chat")
 async def chat_endpoint(payload: MessageCreate):
@@ -284,6 +351,7 @@ async def clear_visual_memories():
 @app.get("/api/settings")
 async def get_settings():
     return {
+        "GEMINI_MODEL": settings.GEMINI_MODEL,
         "OPENROUTER_MODEL": settings.OPENROUTER_MODEL,
         "VISION_MODEL": settings.VISION_MODEL,
         "TTS_PROVIDER": settings.TTS_PROVIDER,
@@ -301,6 +369,8 @@ async def update_settings(data: Dict[str, Any]):
         settings.OPENROUTER_API_KEY = data["OPENROUTER_API_KEY"]
     if "GEMINI_API_KEY" in data:
         settings.GEMINI_API_KEY = data["GEMINI_API_KEY"]
+    if "GEMINI_MODEL" in data and data["GEMINI_MODEL"]:
+        settings.GEMINI_MODEL = data["GEMINI_MODEL"]
     if "OPENROUTER_MODEL" in data and data["OPENROUTER_MODEL"]:
         settings.OPENROUTER_MODEL = data["OPENROUTER_MODEL"]
     if "CAMERA_ENABLED" in data:
@@ -355,17 +425,24 @@ async def websocket_endpoint(websocket: WebSocket):
                     live_detect = data.get("live_detect", True)
                     if frame_b64:
                         camera_service.update_frame_from_base64(frame_b64)
-                        if live_detect and camera_service.latest_frame_cv is not None:
-                            detected_items = neural_detector.detect(camera_service.latest_frame_cv)
-                            h, w = camera_service.latest_frame_cv.shape[:2]
+                        frame = camera_service.latest_frame_cv
+                        if live_detect and frame is not None:
+                            t0 = time.perf_counter()
+                            detected_items = await asyncio.to_thread(neural_detector.detect, frame)
+                            targets = detection_tracker.update(detected_items)
+                            if settings.LEARNING_ENABLED:
+                                await asyncio.to_thread(remember_stable_targets, targets)
+                            h, w = frame.shape[:2]
                             boxes = []
-                            for item in detected_items:
-                                bx, by, bw, bh = item.get("bbox", (0, 0, 0, 0))
+                            for item in targets:
+                                bx, by, bw, bh = item["bbox"]
                                 boxes.append({
+                                    "id": item["track_id"],
                                     "name": item["name"],
                                     "confidence": round(float(item["confidence"]), 2),
                                     "location": item.get("location", ""),
                                     "spatial_relationship": item.get("spatial_relationship", ""),
+                                    "stable": item["stable"],
                                     "rel_x": round(bx / max(w, 1), 4),
                                     "rel_y": round(by / max(h, 1), 4),
                                     "rel_w": round(bw / max(w, 1), 4),
@@ -375,16 +452,34 @@ async def websocket_endpoint(websocket: WebSocket):
                                 "type": "live_detections",
                                 "boxes": boxes,
                                 "frame_w": w,
-                                "frame_h": h
+                                "frame_h": h,
+                                "engine": neural_detector.backend or "heuristic",
+                                "inference_ms": round((time.perf_counter() - t0) * 1000, 1)
                             })
+
+                elif msg_type == "camera_state":
+                    if data.get("active"):
+                        camera_service.start_camera(continuous=bool(data.get("continuous", False)))
+                    else:
+                        camera_service.stop_camera()
+                        detection_tracker.reset()
+                    await manager.broadcast_json({
+                        "type": "camera_status",
+                        "active": camera_service.is_active,
+                        "continuous": camera_service.continuous_mode
+                    })
 
                 elif msg_type == "audio_chunk":
                     audio_b64 = data.get("audio_base64", "")
                     if audio_b64:
                         audio_bytes = base64.b64decode(audio_b64)
-                        transcription = stt_service.transcribe_audio_bytes(audio_bytes)
+                        transcription = await asyncio.to_thread(stt_service.transcribe_audio_bytes, audio_bytes)
                         if transcription:
+                            await websocket.send_json({"type": "transcript", "text": transcription})
                             await process_user_query(transcription, is_voice=True)
+                        else:
+                            await websocket.send_json({"type": "transcript", "text": ""})
+                            await manager.broadcast_json({"type": "state_change", "state": "IDLE"})
 
                 elif msg_type == "barge_in":
                     tts_service.cancel()

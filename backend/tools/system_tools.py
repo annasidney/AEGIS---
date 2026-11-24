@@ -1,9 +1,18 @@
 import datetime
+import getpass
 import os
 import platform
 import psutil
 from typing import Dict, Any
 from backend.tools.registry import registry
+
+def _safe_username() -> str:
+    """os.getlogin() raises OSError without a console session (services, some launchers)."""
+    try:
+        return getpass.getuser()
+    except Exception:
+        return "User"
+
 
 @registry.register(
     name="get_system_time",
@@ -78,7 +87,7 @@ def get_system_info() -> Dict[str, Any]:
         "ram_usage": f"{ram.percent}% (Used: {ram.used // (1024**2)} MB / Total: {ram.total // (1024**2)} MB)",
         "battery": battery_info,
         "hostname": platform.node(),
-        "username": os.getlogin() if hasattr(os, "getlogin") else "User"
+        "username": _safe_username()
     }
 
 @registry.register(

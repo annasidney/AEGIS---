@@ -218,3 +218,16 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- AEGIS ---
+# Keep the prebuilt frontend so the app runs without Node.js
+!frontend/dist/
+!frontend/dist/**
+frontend/node_modules/
+data/
+aegis.db
+*.log
+backend/models_cache/yolov5m.onnx
+.venv/
+
+aegis_env/

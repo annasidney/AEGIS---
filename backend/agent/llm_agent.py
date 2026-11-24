@@ -92,9 +92,9 @@ class AegisAgent:
             else:
                 self.last_pending_task = None
 
-        # Check if Gemini Direct API Key is present
-        if settings.GEMINI_API_KEY and not settings.OPENROUTER_API_KEY:
-            gemini_res = await self._call_gemini_direct(text)
+        # Primary reasoning engine: Gemini 2.5 Flash (ReAct loop with native tool calling)
+        if settings.GEMINI_API_KEY:
+            gemini_res = await self._run_gemini_react(text)
             if gemini_res:
                 return gemini_res
 
@@ -205,30 +205,129 @@ class AegisAgent:
 
         return {"response": "I have processed your request.", "verified": True}
 
-    async def _call_gemini_direct(self, text: str) -> Optional[Dict[str, Any]]:
-        """Direct Google Gemini REST API handler."""
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={settings.GEMINI_API_KEY}"
+    # ---------------------------------------------------------------- Gemini ReAct
+    _SCHEMA_KEYS = {"type", "description", "enum", "properties", "required", "items", "format", "nullable"}
+
+    @classmethod
+    def _to_gemini_schema(cls, schema: Dict[str, Any]) -> Dict[str, Any]:
+        """Strip JSON-schema keys that the Gemini function-declaration subset does not accept."""
+        if not isinstance(schema, dict):
+            return schema
+        clean: Dict[str, Any] = {}
+        for k, v in schema.items():
+            if k not in cls._SCHEMA_KEYS:
+                continue
+            if k == "properties" and isinstance(v, dict):
+                clean[k] = {pk: cls._to_gemini_schema(pv) for pk, pv in v.items()}
+            elif k == "items":
+                clean[k] = cls._to_gemini_schema(v)
+            else:
+                clean[k] = v
+        return clean
+
+    def _gemini_function_declarations(self) -> List[Dict[str, Any]]:
+        decls: List[Dict[str, Any]] = []
+        for tool in registry.get_all_tools_metadata():
+            fn = tool["function"]
+            decl: Dict[str, Any] = {"name": fn["name"], "description": fn["description"]}
+            params = self._to_gemini_schema(fn.get("parameters") or {})
+            if params.get("properties"):
+                decl["parameters"] = params
+            decls.append(decl)
+        decls.append({
+            "name": "search_web",
+            "description": "Search the live web (Wikipedia + DuckDuckGo) for current facts, news, weather, prices or events.",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string", "description": "Search query"}},
+                "required": ["query"],
+            },
+        })
+        return decls
+
+    def _gemini_contents(self, text: str) -> List[Dict[str, Any]]:
+        contents: List[Dict[str, Any]] = []
+        for m in self.conversation_history[-10:]:
+            role = "user" if m.get("role") == "user" else "model"
+            if isinstance(m.get("content"), str) and m["content"].strip():
+                contents.append({"role": role, "parts": [{"text": m["content"]}]})
+        contents.append({"role": "user", "parts": [{"text": text}]})
+        return contents
+
+    async def _run_gemini_react(self, text: str) -> Optional[Dict[str, Any]]:
+        """
+        ReAct loop on Gemini 2.5 Flash: the model REASONS about the goal, ACTS by calling a
+        registered tool, OBSERVES the result, and repeats until it can answer (max AGENT_MAX_STEPS).
+        Returns None on any transport/API failure so the caller can fall back gracefully.
+        """
+        url = f"{settings.GEMINI_BASE_URL}/models/{settings.GEMINI_MODEL}:generateContent"
+        headers = {"x-goog-api-key": settings.GEMINI_API_KEY, "Content-Type": "application/json"}
+
+        system_text = SYSTEM_PROMPT + self._get_persistent_memories_context()
+        if self.dictation_buffer:
+            system_text += f"\n\nCURRENT DICTATED BUFFER:\n{self.get_dictation_content()}"
+
+        contents = self._gemini_contents(text)
+        tools = [{"functionDeclarations": self._gemini_function_declarations()}]
+        steps: List[Dict[str, Any]] = []
+        last_tool: Optional[str] = None
+
+        for _ in range(max(1, settings.AGENT_MAX_STEPS)):
             payload = {
-                "contents": [
-                    {
-                        "parts": [{"text": f"{SYSTEM_PROMPT}\n\nUser: {text}"}]
-                    }
-                ],
-                "generationConfig": {"temperature": 0.4}
+                "systemInstruction": {"parts": [{"text": system_text}]},
+                "contents": contents,
+                "tools": tools,
+                "toolConfig": {"functionCallingConfig": {"mode": "AUTO"}},
+                "generationConfig": {"temperature": 0.4, "maxOutputTokens": 1024},
             }
-            async with httpx.AsyncClient(timeout=20.0) as client:
-                resp = await client.post(url, json=payload)
-            if resp.status_code == 200:
-                data = resp.json()
-                cand = data["candidates"][0]["content"]["parts"][0]["text"]
+            try:
+                async with httpx.AsyncClient(timeout=25.0) as client:
+                    resp = await client.post(url, headers=headers, json=payload)
+            except Exception as e:
+                logger.error(f"Gemini request failed: {e}")
+                return None
+
+            if resp.status_code != 200:
+                logger.error(f"Gemini API error {resp.status_code}: {resp.text[:300]}")
+                return None
+
+            try:
+                candidate = resp.json()["candidates"][0]
+                content = candidate.get("content") or {}
+                parts = content.get("parts") or []
+            except Exception as e:
+                logger.error(f"Unexpected Gemini response shape: {e}")
+                return None
+
+            calls = [p["functionCall"] for p in parts if "functionCall" in p]
+            if not calls:
+                answer = " ".join(p["text"] for p in parts if p.get("text") and not p.get("thought")).strip()
+                if not answer:
+                    return None
                 self.conversation_history.append({"role": "user", "content": text})
-                self.conversation_history.append({"role": "assistant", "content": cand})
-                self._save_conversation(text, cand)
-                return {"response": cand, "verified": True}
-        except Exception as e:
-            logger.error(f"Gemini Direct API error: {e}")
-        return None
+                self.conversation_history.append({"role": "assistant", "content": answer})
+                self.conversation_history = self.conversation_history[-20:]
+                self._save_conversation(text, answer)
+                return {"response": answer, "tool": last_tool, "steps": steps, "verified": True}
+
+            # ACT -> OBSERVE
+            contents.append(content)  # keep the model turn exactly as returned (thought signatures)
+            response_parts = []
+            for call in calls:
+                name, args = call.get("name", ""), call.get("args") or {}
+                logger.info(f"Gemini ReAct tool call: {name}({args})")
+                if name == "search_web":
+                    result: Any = search_web_summary(args.get("query", text))
+                else:
+                    exec_res = await registry.execute(name, args)
+                    result = exec_res.get("result", exec_res)
+                last_tool = name
+                steps.append({"tool": name, "args": args})
+                result_json = json.loads(json.dumps(result, default=str))
+                response_parts.append({"functionResponse": {"name": name, "response": {"result": result_json}}})
+            contents.append({"role": "user", "parts": response_parts})
+
+        return {"response": "I've carried out those steps for you.", "tool": last_tool, "steps": steps, "verified": True}
 
     async def _handle_offline_agent(self, text: str) -> Dict[str, Any]:
         """Robust offline handler when cloud LLM is unavailable."""

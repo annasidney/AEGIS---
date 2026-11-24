@@ -238,13 +238,13 @@ class VisualMemoryEngine:
                 "message": covered_msg
             }
 
-        # 2. Try Google Gemini 2.0 Flash Vision (Direct API Key)
+        # 2. Try Google Gemini 2.5 Flash Vision (Direct API Key)
         if settings.GEMINI_API_KEY:
             gemini_res = await self._analyze_with_gemini_direct(frame_base64)
             if gemini_res and len(gemini_res.get("objects", [])) > 0:
                 return gemini_res
 
-        # 3. Try OpenRouter Vision (Gemini 2.0 Flash or Vision Model)
+        # 3. Try OpenRouter Vision (Gemini 2.5 Flash or Vision Model)
         if settings.OPENROUTER_API_KEY:
             openrouter_res = await self._analyze_with_openrouter(frame_base64)
             if openrouter_res and len(openrouter_res.get("objects", [])) > 0:
@@ -254,7 +254,7 @@ class VisualMemoryEngine:
         return self._analyze_with_local_cv(img)
 
     async def _analyze_with_gemini_direct(self, frame_base64: str) -> Optional[Dict[str, Any]]:
-        """Multimodal visual perception with Gemini 2.0 Flash via google-generativeai SDK."""
+        """Multimodal visual perception with Gemini 2.5 Flash via google-generativeai SDK."""
         prompt = """Analyze this camera image. List ONLY objects you can ACTUALLY SEE in the image.
 
 For each object, provide:
@@ -269,41 +269,14 @@ IMPORTANT: Only list objects you are confident are actually in the image. Do NOT
 Respond in JSON (no code fences):
 {"scene": "room type", "people_count": 0, "people_details": [], "summary": "I see...", "objects": [{"name": "...", "location": "...", "spatial_relationship": "..."}]}"""
 
-        try:
-            import google.generativeai as genai
-            genai.configure(api_key=settings.GEMINI_API_KEY)
-            model = genai.GenerativeModel("gemini-2.0-flash")
-
-            import io
-            from PIL import Image
-            img_bytes = base64.b64decode(frame_base64)
-            pil_image = Image.open(io.BytesIO(img_bytes))
-
-            response = model.generate_content(
-                [prompt, pil_image],
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.1,
-                    max_output_tokens=1200
-                )
-            )
-
-            if response and response.text:
-                logger.info(f"Gemini SDK response length: {len(response.text)}")
-                return self._parse_vision_response(response.text)
-        except ImportError:
-            logger.warning("google-generativeai not installed, falling back to HTTP API")
-            # Fallback to raw HTTP
-            return await self._analyze_with_gemini_http(frame_base64)
-        except Exception as e:
-            logger.error(f"Gemini SDK Vision error: {e}")
-        return None
+        return await self._analyze_with_gemini_http(frame_base64)
 
     async def _analyze_with_gemini_http(self, frame_base64: str) -> Optional[Dict[str, Any]]:
         """Fallback: Gemini via raw HTTP if SDK is unavailable."""
         prompt = """Analyze this camera image. List ONLY objects you can ACTUALLY SEE. Respond in JSON:
 {"scene": "room type", "people_count": 0, "summary": "I see...", "objects": [{"name": "...", "location": "...", "spatial_relationship": "..."}]}"""
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={settings.GEMINI_API_KEY}"
+        url = f"{settings.GEMINI_BASE_URL}/models/{settings.GEMINI_MODEL}:generateContent?key={settings.GEMINI_API_KEY}"
         payload = {
             "contents": [{"parts": [
                 {"text": prompt},

@@ -2,7 +2,9 @@ import os
 import cv2
 import numpy as np
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
+
+from backend.config import settings
 
 logger = logging.getLogger("AEGIS.NeuralDetector")
 
@@ -37,6 +39,10 @@ LARGE_OBJECTS = {"person", "chair", "couch", "sofa", "bed", "desk", "dining tabl
                  "oven", "microwave", "sink", "toilet", "painting", "tv", "screen"}
 
 
+# A person box is dropped as a duplicate only when >60% of the smaller box lies inside a kept one.
+# (0.25 wrongly merged two people standing close together.)
+PERSON_NESTED_OVERLAP = 0.6
+
 INDOOR_RELEVANT = {
     "person", "cell phone", "bottle", "cup", "wine glass", "remote", "laptop", "mouse", "keyboard",
     "book", "clock", "backpack", "handbag", "suitcase", "chair", "couch", "bed", "dining table", "tv",
@@ -45,7 +51,7 @@ INDOOR_RELEVANT = {
 
 
 class NeuralObjectDetector:
-    """High-accuracy YOLOX ONNX neural object detector with grid unrolling decoding and spatial reasoning."""
+    """Local ONNX object detector (YOLOv5m primary, YOLOX-tiny fallback) with spatial reasoning."""
 
     def __init__(self):
         self.session = None
@@ -55,39 +61,148 @@ class NeuralObjectDetector:
         self._input_w = 416
         self.grids = None
         self.expanded_strides = None
+        self.backend = None
+        self._input_dtype = np.float32
         self._load_model()
 
     def _load_model(self):
+        """Prefer YOLOv5m (ONNX, 640x640, FP16/FP32). Fall back to the bundled YOLOX-tiny."""
+        self.backend = None
         try:
             import onnxruntime as ort
-            model_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "models_cache", "coco-yolox_tiny.onnx")
+        except Exception as e:
+            logger.warning(f"onnxruntime unavailable: {e}")
+            return
+
+        cache_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "models_cache")
+        v5_path = os.path.join(cache_dir, settings.YOLO_MODEL_FILE)
+        try:
+            if os.path.exists(v5_path):
+                self.session = ort.InferenceSession(v5_path, providers=["CPUExecutionProvider"])
+                inp = self.session.get_inputs()[0]
+                self._input_name = inp.name
+                self._input_h = int(inp.shape[2]) if isinstance(inp.shape[2], int) else 640
+                self._input_w = int(inp.shape[3]) if isinstance(inp.shape[3], int) else 640
+                self._input_dtype = np.float16 if "float16" in inp.type else np.float32
+                self.backend = "yolov5m"
+                self.model_loaded = True
+                logger.info(f"YOLOv5m ONNX loaded: input {inp.name} {inp.shape} {inp.type}")
+                return
+        except Exception as e:
+            logger.warning(f"Could not initialize YOLOv5m ({e}); trying YOLOX fallback")
+            self.session = None
+
+        try:
+            model_path = os.path.join(cache_dir, "coco-yolox_tiny.onnx")
             if os.path.exists(model_path):
                 self.session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
                 inp = self.session.get_inputs()[0]
                 self._input_name = inp.name
                 self._input_h = inp.shape[2]
                 self._input_w = inp.shape[3]
+                self._input_dtype = np.float32
 
                 # Precompute feature map anchor grids and strides for YOLOX decoding
                 strides = [8, 16, 32]
                 grids = []
                 expanded_strides = []
-                for s in strides:
-                    fh = self._input_h // s
-                    fw = self._input_w // s
+                for st in strides:
+                    fh = self._input_h // st
+                    fw = self._input_w // st
                     xv, yv = np.meshgrid(np.arange(fw), np.arange(fh))
                     grids.append(np.stack((xv, yv), 2).reshape(-1, 2))
-                    expanded_strides.append(np.full((fh * fw, 1), s))
+                    expanded_strides.append(np.full((fh * fw, 1), st))
 
                 self.grids = np.concatenate(grids, axis=0)
                 self.expanded_strides = np.concatenate(expanded_strides, axis=0)
-
+                self.backend = "yolox"
                 self.model_loaded = True
-                logger.info(f"YOLOX Neural Detector loaded: input {self._input_name} shape {inp.shape}")
+                logger.info(f"YOLOX fallback loaded: input {self._input_name} shape {inp.shape}")
             else:
-                logger.warning(f"YOLOX model not found at {model_path}")
+                logger.warning(f"No detector model found in {cache_dir}. Run scripts/download_models.py")
         except Exception as e:
             logger.warning(f"Could not initialize YOLOX: {e}")
+
+    # ------------------------------------------------------------------ YOLOv5m
+    @staticmethod
+    def letterbox(img: np.ndarray, size: Tuple[int, int]) -> Tuple[np.ndarray, float, int, int]:
+        """Resize keeping aspect ratio and pad to (h, w). Returns image, scale, pad_x, pad_y."""
+        th, tw = size
+        h, w = img.shape[:2]
+        r = min(tw / w, th / h)
+        nw, nh = int(round(w * r)), int(round(h * r))
+        resized = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_LINEAR)
+        pad_x, pad_y = (tw - nw) // 2, (th - nh) // 2
+        canvas = np.full((th, tw, 3), 114, dtype=np.uint8)
+        canvas[pad_y:pad_y + nh, pad_x:pad_x + nw] = resized
+        return canvas, r, pad_x, pad_y
+
+    def decode_yolov5(self, pred: np.ndarray, scale: float, pad_x: int, pad_y: int,
+                      w_orig: int, h_orig: int) -> List[Dict[str, Any]]:
+        """Decode a YOLOv5 [N, 85] prediction (cx, cy, w, h, obj, 80 class scores) into detections."""
+        pred = pred.astype(np.float32)
+        obj = pred[:, 4]
+        keep = obj >= 0.20
+        pred, obj = pred[keep], obj[keep]
+        if pred.shape[0] == 0:
+            return []
+
+        cls_scores = pred[:, 5:] * obj[:, None]
+        cls_ids = np.argmax(cls_scores, axis=1)
+        scores = cls_scores[np.arange(len(cls_ids)), cls_ids]
+
+        boxes, kept_scores, kept_cls = [], [], []
+        for i in range(len(scores)):
+            raw_name = COCO_CLASSES[int(cls_ids[i])]
+            min_thr = settings.YOLO_CONF_THRESHOLD if raw_name in INDOOR_RELEVANT else 0.60
+            if scores[i] < min_thr:
+                continue
+            cx, cy, bw, bh = pred[i, :4]
+            x1 = (cx - bw / 2 - pad_x) / scale
+            y1 = (cy - bh / 2 - pad_y) / scale
+            x2 = (cx + bw / 2 - pad_x) / scale
+            y2 = (cy + bh / 2 - pad_y) / scale
+            x1, y1 = max(0, int(x1)), max(0, int(y1))
+            x2, y2 = min(w_orig, int(x2)), min(h_orig, int(y2))
+            w_box, h_box = x2 - x1, y2 - y1
+            if w_box < 20 or h_box < 20:
+                continue
+            boxes.append([x1, y1, w_box, h_box])
+            kept_scores.append(float(scores[i]))
+            kept_cls.append(int(cls_ids[i]))
+
+        detections: List[Dict[str, Any]] = []
+        if boxes:
+            idxs = cv2.dnn.NMSBoxes(boxes, kept_scores, settings.YOLO_CONF_THRESHOLD, settings.YOLO_IOU_THRESHOLD)
+            for i in (np.array(idxs).flatten() if len(idxs) else []):
+                raw_label = COCO_CLASSES[kept_cls[i]]
+                detections.append({
+                    "name": LABEL_MAP.get(raw_label, raw_label),
+                    "confidence": round(kept_scores[i], 3),
+                    "bbox": tuple(boxes[i]),
+                    "source": "yolov5m",
+                })
+        return detections
+
+    def _run_yolov5(self, img_cv: np.ndarray) -> List[Dict[str, Any]]:
+        h_orig, w_orig = img_cv.shape[:2]
+        try:
+            boxed, scale, pad_x, pad_y = self.letterbox(img_cv, (self._input_h, self._input_w))
+            blob = boxed[:, :, ::-1].transpose(2, 0, 1)  # BGR->RGB, HWC->CHW
+            blob = (np.ascontiguousarray(blob, dtype=np.float32) / 255.0)[np.newaxis, ...]
+            blob = blob.astype(self._input_dtype)
+            pred = self.session.run(None, {self._input_name: blob})[0][0]
+            return self.decode_yolov5(pred, scale, pad_x, pad_y, w_orig, h_orig)
+        except Exception as e:
+            logger.error(f"YOLOv5m inference error: {e}")
+            return []
+
+    def _run_model(self, img_cv: np.ndarray) -> List[Dict[str, Any]]:
+        if not self.model_loaded or self.session is None:
+            return []
+        if getattr(self, "backend", None) == "yolov5m":
+            return self._run_yolov5(img_cv)
+        return self._run_yolox(img_cv)
 
     def _run_yolox(self, img_cv: np.ndarray) -> List[Dict[str, Any]]:
         """Run YOLOX inference with exact anchor grid and stride decoding."""
@@ -164,7 +279,7 @@ class NeuralObjectDetector:
         return detections
 
     def detect(self, img_cv: np.ndarray) -> List[Dict[str, Any]]:
-        """Full detection pipeline: YOLOX neural network + in-hand saliency + spatial classification."""
+        """Full detection pipeline: YOLOv5m + in-hand saliency + spatial classification."""
         if img_cv is None or img_cv.size == 0:
             return []
 
@@ -176,8 +291,8 @@ class NeuralObjectDetector:
                                 np.array([0, 133, 77], dtype=np.uint8),
                                 np.array([255, 173, 127], dtype=np.uint8))
 
-        # Step 1: Run YOLOX neural network
-        raw_detections = self._run_yolox(img_cv)
+        # Step 1: Run the neural detector (YOLOv5m ONNX, YOLOX fallback)
+        raw_detections = self._run_model(img_cv)
 
         # Step 2: Separate and suppress duplicate person boxes (avoid nested person sub-boxes)
         person_dets = [d for d in raw_detections if d["name"] == "person"]
@@ -187,12 +302,13 @@ class NeuralObjectDetector:
         for p in sorted(person_dets, key=lambda x: x["confidence"], reverse=True):
             px, py, pw, ph = p["bbox"]
             overlap = False
-            for kp in kept_people:
+            # YOLOv5m's NMS already removes duplicates; the nested-box rule is only needed for YOLOX-tiny.
+            for kp in (kept_people if p.get("source") == "yolox" else []):
                 kpx, kpy, kpw, kph = kp["bbox"]
                 inter_x = max(0, min(px + pw, kpx + kpw) - max(px, kpx))
                 inter_y = max(0, min(py + ph, kpy + kph) - max(py, kpy))
                 inter_area = inter_x * inter_y
-                if inter_area / min(pw * ph, kpw * kph) > 0.25:
+                if inter_area / max(min(pw * ph, kpw * kph), 1) > PERSON_NESTED_OVERLAP:
                     overlap = True
                     break
             if not overlap:
@@ -323,10 +439,17 @@ class NeuralObjectDetector:
             cx = x + w / 2
             cy = y + h / 2
 
+            # Bounding-box (not contour) size guard: a guessed object can't fill the frame
+            bbox_ratio = (w * h) / total_frame_area
+            if bbox_ratio > 0.30:
+                continue
+
             # Skin overlap check for in-hand objects
             roi_skin = skin_mask[max(0, y-5):min(h_orig, y+h+5), max(0, x-5):min(w_orig, x+w+5)]
             skin_ratio = np.count_nonzero(roi_skin) / max(roi_skin.size, 1)
             is_in_hand = skin_ratio > 0.12
+            if is_in_hand and bbox_ratio > 0.12:   # handheld items (phone/remote/mug) are small
+                continue
 
             label = None
             conf = 0.85

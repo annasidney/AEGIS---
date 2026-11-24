@@ -319,6 +319,24 @@ class FastDeterministicRouter:
                     "verified": True
                 }
 
+        # 13b. Hardware controls: brightness, lock screen, battery
+        bright = re.search(r"\b(?:set )?brightness\s*(?:to\s*)?(\d{1,3})\s*(?:%|percent)?", t)
+        if bright:
+            res = await registry.execute("set_brightness", {"action": "set", "level": int(bright.group(1))})
+            return {"handled": True, "response": res.get("result", {}).get("message", "Brightness updated."), "tool": "set_brightness", "verified": res.get("verified", False)}
+        if re.search(r"\b(increase|raise|turn up|brighten)\b.*\bbrightness\b|\bbrightness up\b", t):
+            res = await registry.execute("set_brightness", {"action": "up"})
+            return {"handled": True, "response": res.get("result", {}).get("message", "Brightness increased."), "tool": "set_brightness", "verified": res.get("verified", False)}
+        if re.search(r"\b(decrease|lower|reduce|turn down|dim)\b.*\bbrightness\b|\bbrightness down\b|\bdim (the )?screen\b", t):
+            res = await registry.execute("set_brightness", {"action": "down"})
+            return {"handled": True, "response": res.get("result", {}).get("message", "Brightness decreased."), "tool": "set_brightness", "verified": res.get("verified", False)}
+        if re.search(r"\block (my |the )?(screen|pc|computer|laptop)\b", t):
+            res = await registry.execute("lock_screen", {})
+            return {"handled": True, "response": res.get("result", {}).get("message", "Locking your screen."), "tool": "lock_screen", "verified": res.get("verified", False)}
+        if re.search(r"\b(battery|charge)\b.*(level|status|percentage|left|remaining)|\bhow much battery\b|\bbattery (status|level|percentage)\b", t):
+            res = await registry.execute("get_battery_status", {})
+            return {"handled": True, "response": res.get("result", {}).get("message", "Battery status unavailable."), "tool": "get_battery_status", "verified": True}
+
         # 14. Volume Adjustments
         if "volume up" in t or "increase volume" in t:
             await registry.execute("set_volume", {"action": "up"})
